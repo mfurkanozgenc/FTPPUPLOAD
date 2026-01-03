@@ -54,6 +54,7 @@
             this.folderBrowserDialog = new System.Windows.Forms.FolderBrowserDialog();
             this.lblStatus = new System.Windows.Forms.Label();
             this.groupBox3 = new System.Windows.Forms.GroupBox();
+            this.btnDownloadAll = new System.Windows.Forms.Button();
             this.btnForceDeleteCorrupted = new System.Windows.Forms.Button();
             this.btnRename = new System.Windows.Forms.Button();
             this.label6 = new System.Windows.Forms.Label();
@@ -327,7 +328,8 @@
             this.lblStatus.Text = "Hazır...";
             // 
             // groupBox3
-            // 
+            //
+            this.groupBox3.Controls.Add(this.btnDownloadAll);
             this.groupBox3.Controls.Add(this.btnForceDeleteCorrupted);
             this.groupBox3.Controls.Add(this.btnRename);
             this.groupBox3.Controls.Add(this.label6);
@@ -339,7 +341,7 @@
             this.groupBox3.Margin = new System.Windows.Forms.Padding(2, 2, 2, 2);
             this.groupBox3.Name = "groupBox3";
             this.groupBox3.Padding = new System.Windows.Forms.Padding(2, 2, 2, 2);
-            this.groupBox3.Size = new System.Drawing.Size(285, 439);
+            this.groupBox3.Size = new System.Drawing.Size(285, 475);
             this.groupBox3.TabIndex = 6;
             this.groupBox3.TabStop = false;
             this.groupBox3.Text = "FTP Yönetimi";
@@ -357,7 +359,22 @@
             this.btnForceDeleteCorrupted.Text = "⚠ ZORLA SİL (Bozuk Klasör İçin)";
             this.btnForceDeleteCorrupted.UseVisualStyleBackColor = false;
             this.btnForceDeleteCorrupted.Click += new System.EventHandler(this.btnForceDeleteCorrupted_Click);
-            // 
+            //
+            // btnDownloadAll
+            //
+            this.btnDownloadAll.BackColor = System.Drawing.Color.MediumSeaGreen;
+            this.btnDownloadAll.Enabled = false;
+            this.btnDownloadAll.Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(162)));
+            this.btnDownloadAll.ForeColor = System.Drawing.Color.White;
+            this.btnDownloadAll.Location = new System.Drawing.Point(11, 437);
+            this.btnDownloadAll.Margin = new System.Windows.Forms.Padding(2, 2, 2, 2);
+            this.btnDownloadAll.Name = "btnDownloadAll";
+            this.btnDownloadAll.Size = new System.Drawing.Size(262, 28);
+            this.btnDownloadAll.TabIndex = 7;
+            this.btnDownloadAll.Text = "📥 Tümünü İndir (ZIP)";
+            this.btnDownloadAll.UseVisualStyleBackColor = false;
+            this.btnDownloadAll.Click += new System.EventHandler(this.btnDownloadAll_Click);
+            //
             // btnRename
             // 
             this.btnRename.BackColor = System.Drawing.Color.RoyalBlue;
@@ -495,6 +512,7 @@
         private System.Windows.Forms.Label label8;
         private System.Windows.Forms.Button btnTestAndSave;
         private System.Windows.Forms.Button btnDeleteServer;
+        private System.Windows.Forms.Button btnDownloadAll;
     }
 }
 

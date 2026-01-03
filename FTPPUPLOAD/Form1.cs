@@ -614,6 +614,46 @@ if (isset($_POST['unzip'])) {{
             }
         }
 
+        /// <summary>
+        /// FTP'den tek dosya indirir - UploadFileToFtp'nin tersi
+        /// </summary>
+        private async Task<bool> DownloadFileFromFtp(string ftpFilePath, string localFilePath, string username, string password)
+        {
+            try
+            {
+                // Lokal klasör yoksa oluştur
+                string localDir = Path.GetDirectoryName(localFilePath);
+                if (!Directory.Exists(localDir))
+                    Directory.CreateDirectory(localDir);
+
+                FtpWebRequest request = (FtpWebRequest)WebRequest.Create(ftpFilePath);
+                request.Method = WebRequestMethods.Ftp.DownloadFile;
+                request.Credentials = new NetworkCredential(username, password);
+                request.UseBinary = true;
+                request.KeepAlive = false;
+
+                using (FtpWebResponse response = (FtpWebResponse)await request.GetResponseAsync())
+                using (Stream responseStream = response.GetResponseStream())
+                using (FileStream fileStream = new FileStream(localFilePath, FileMode.Create))
+                {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+
+                    while ((bytesRead = await responseStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    {
+                        await fileStream.WriteAsync(buffer, 0, bytesRead);
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AddLog($"  ✗ Download error: {ex.Message}");
+                return false;
+            }
+        }
+
         // FTP URL'den klasör yolunu çıkar (dosya adı olmadan)
         private string GetFtpDirectoryPath(string ftpFilePath)
         {
@@ -735,6 +775,7 @@ if (isset($_POST['unzip'])) {{
             btnDeleteAll.Enabled = enabled;
             btnRename.Enabled = enabled;
             btnForceDeleteCorrupted.Enabled = enabled;
+            btnDownloadAll.Enabled = enabled;
         }
 
         // FTP dosyalarını listele
@@ -761,6 +802,7 @@ if (isset($_POST['unzip'])) {{
 
             SetControlsEnabled(false);
             lstFtpFiles.Items.Clear();
+            btnDownloadAll.Enabled = false;
             lblStatus.Text = "FTP dosyaları listeleniyor...";
 
             try
@@ -793,6 +835,10 @@ if (isset($_POST['unzip'])) {{
                     }
 
                     AddLog($"Toplam {fileCount} dosya, {folderCount} klasör listelendi.");
+
+                    // Sadece dosya varsa butonu aktif et
+                    btnDownloadAll.Enabled = (fileCount > 0);
+
                     MessageBox.Show($"{fileCount} dosya, {folderCount} klasör bulundu.", "Başarılı", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
             }
@@ -800,6 +846,7 @@ if (isset($_POST['unzip'])) {{
             {
                 MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 AddLog($"HATA: {ex.Message}");
+                btnDownloadAll.Enabled = false;
             }
             finally
             {
@@ -1312,6 +1359,9 @@ if (isset($_POST['unzip'])) {{
 
                 AddLog($"✓ Sunucu '{server.Name}' yüklendi.");
                 MessageBox.Show($"Sunucu '{server.Name}' bilgileri yüklendi.", "Başarılı", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                // Otomatik olarak FTP dosyalarını listele
+                btnListFiles_Click(sender, e);
             }
             else
             {
@@ -1627,6 +1677,197 @@ if (isset($_POST['unzip'])) {{
             catch
             {
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Tümünü İndir butonu - tüm dosyaları ZIP olarak indirir
+        /// </summary>
+        private async void btnDownloadAll_Click(object sender, EventArgs e)
+        {
+            // Validasyon: Liste boş mu?
+            if (lstFtpFiles.Items.Count == 0)
+            {
+                MessageBox.Show("FTP sunucusunda dosya bulunmuyor! Önce dosyaları listeleyiniz.",
+                    "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Sadece dosyaları filtrele (klasörleri değil)
+            var filesToDownload = lstFtpFiles.Items.Cast<FtpItem>()
+                .Where(item => !item.IsDirectory)
+                .ToList();
+
+            if (filesToDownload.Count == 0)
+            {
+                MessageBox.Show("İndirilecek dosya bulunamadı! (Sadece klasörler var)",
+                    "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Kullanıcı onayı
+            var confirmResult = MessageBox.Show(
+                $"{filesToDownload.Count} dosya indirilip ZIP olarak kaydedilecek.\n\nDevam etmek istiyor musunuz?",
+                "İndirme Onayı",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (confirmResult != DialogResult.Yes)
+                return;
+
+            // İşlem sırasında kontrolleri devre dışı bırak
+            SetControlsEnabled(false);
+            progressBar.Value = 0;
+            progressBar.Maximum = filesToDownload.Count;
+            progressBar.Style = ProgressBarStyle.Blocks;
+
+            try
+            {
+                await DownloadAllFilesAsZip(filesToDownload);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Hata oluştu: {ex.Message}", "Hata",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AddLog($"HATA: {ex.Message}");
+            }
+            finally
+            {
+                SetControlsEnabled(true);
+                lblStatus.Text = "Hazır...";
+                progressBar.Value = 0;
+                progressBar.Style = ProgressBarStyle.Blocks;
+            }
+        }
+
+        /// <summary>
+        /// Tüm dosyaları indirir, ZIP oluşturur, İndirilenler klasörüne kaydeder
+        /// </summary>
+        private async Task DownloadAllFilesAsZip(List<FtpItem> filesToDownload)
+        {
+            string username = txtUsername.Text.Trim();
+            string password = txtPassword.Text;
+
+            // Geçici klasör oluştur
+            string tempDir = Path.Combine(Path.GetTempPath(), $"FtpDownload_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+
+            // ZIP dosya yolu
+            string zipFileName = $"ftp_download_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
+            string downloadsFolder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Downloads");
+            string zipFilePath = Path.Combine(downloadsFolder, zipFileName);
+
+            try
+            {
+                AddLog("─────────────────────────────────");
+                AddLog($"📥 {filesToDownload.Count} dosya indiriliyor...");
+                lblStatus.Text = "Dosyalar indiriliyor...";
+
+                int successCount = 0;
+                int failCount = 0;
+
+                // Her dosyayı indir
+                foreach (var ftpItem in filesToDownload)
+                {
+                    try
+                    {
+                        // FTP path'den relative path çıkar
+                        string ftpHost = txtFtpHost.Text.Trim();
+                        if (!ftpHost.StartsWith("ftp://"))
+                            ftpHost = "ftp://" + ftpHost;
+
+                        string relativePath = ftpItem.Path.Replace(ftpHost.TrimEnd('/') + "/", "");
+                        string localFilePath = Path.Combine(tempDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+                        lblStatus.Text = $"İndiriliyor: {Path.GetFileName(ftpItem.Path)} ({successCount + failCount + 1}/{filesToDownload.Count})";
+                        Application.DoEvents();
+
+                        bool downloaded = await DownloadFileFromFtp(ftpItem.Path, localFilePath, username, password);
+
+                        if (downloaded)
+                        {
+                            successCount++;
+                            AddLog($"✓ İndirildi: {Path.GetFileName(ftpItem.Path)}");
+                        }
+                        else
+                        {
+                            failCount++;
+                            AddLog($"✗ İndirilemedi: {Path.GetFileName(ftpItem.Path)}");
+                        }
+
+                        progressBar.Value++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failCount++;
+                        AddLog($"✗ Hata ({Path.GetFileName(ftpItem.Path)}): {ex.Message}");
+                        progressBar.Value++;
+                    }
+                }
+
+                // Hiç dosya indirilemediyse hata ver
+                if (successCount == 0)
+                    throw new Exception("Hiçbir dosya indirilemedi!");
+
+                // ZIP oluştur
+                AddLog($"📦 ZIP dosyası oluşturuluyor...");
+                lblStatus.Text = "ZIP dosyası oluşturuluyor...";
+                progressBar.Style = ProgressBarStyle.Marquee;
+
+                await Task.Run(() =>
+                {
+                    ZipFile.CreateFromDirectory(tempDir, zipFilePath, CompressionLevel.Optimal, false);
+                });
+
+                FileInfo zipInfo = new FileInfo(zipFilePath);
+                AddLog($"✓ ZIP oluşturuldu: {zipFileName} ({zipInfo.Length / 1024.0 / 1024.0:F2} MB)");
+                AddLog($"✓ Konum: {zipFilePath}");
+                AddLog("─────────────────────────────────");
+                AddLog($"✅ İşlem Tamamlandı! Başarılı: {successCount}, Başarısız: {failCount}");
+
+                progressBar.Style = ProgressBarStyle.Blocks;
+                progressBar.Value = progressBar.Maximum;
+
+                // Başarı mesajı
+                string message = $"✅ İNDİRME TAMAMLANDI!\n\n" +
+                                $"📊 Başarılı: {successCount} dosya\n" +
+                                $"❌ Başarısız: {failCount} dosya\n\n" +
+                                $"📦 ZIP Dosyası:\n{zipFileName}\n\n" +
+                                $"💾 Boyut: {zipInfo.Length / 1024.0 / 1024.0:F2} MB\n\n" +
+                                $"📁 Konum:\n{zipFilePath}\n\n" +
+                                $"Dosya başarıyla Downloads klasörüne kaydedildi!";
+
+                MessageBox.Show(message, "Başarılı! 🎉", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                // İndirilenler klasörünü aç
+                var openFolderResult = MessageBox.Show(
+                    "Downloads klasörünü açmak ister misiniz?",
+                    "Klasör Aç",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (openFolderResult == DialogResult.Yes)
+                {
+                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{zipFilePath}\"");
+                }
+            }
+            finally
+            {
+                // Geçici dosyaları temizle
+                try
+                {
+                    if (Directory.Exists(tempDir))
+                    {
+                        Directory.Delete(tempDir, true);
+                        AddLog($"🗑️ Geçici dosyalar temizlendi.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"⚠ Temizlik hatası: {ex.Message}");
+                }
             }
         }
 
